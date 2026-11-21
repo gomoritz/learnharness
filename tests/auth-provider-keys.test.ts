@@ -13,8 +13,7 @@
  * ALL the env vars a provider reads as API keys.
  *
  * Owner-spec exclusions (asserted ABSENT): github-copilot (OAuth),
- * amazon-bedrock (AWS creds), google-vertex (ADC), azure
- * (needs base URL), the cloudflare account-scoped pair; anthropic keeps
+ * amazon-bedrock (AWS creds), azure (needs base URL), the cloudflare account-scoped pair; anthropic keeps
  * ANTHROPIC_API_KEY only (AUTH_TOKEN/OAUTH_TOKEN stay env-only).
  */
 
@@ -31,7 +30,6 @@ const ANTHROPIC_ALTERNATES = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"];
 const EXCLUDED_PROVIDERS = new Set([
 	"github-copilot",
 	"amazon-bedrock",
-	"google-vertex",
 	"azure",
 	"cloudflare-workers-ai",
 	"cloudflare-ai-gateway",

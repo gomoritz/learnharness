@@ -94,9 +94,9 @@ export interface AuthProviderInfo {
  * loudly instead of drifting silently.
  *
  * EXCLUDED by owner spec — providers whose auth is not a plain key this
- * wave: github-copilot (OAuth), amazon-bedrock (AWS creds), google-vertex
- * (ADC), azure (needs a base URL), the cloudflare
- * account-scoped pair. Anthropic keeps ANTHROPIC_API_KEY only — its
+ * wave: github-copilot (OAuth), amazon-bedrock (AWS creds), azure (needs a
+ * base URL), the cloudflare account-scoped pair. google-vertex is listed
+ * with its plain GOOGLE_CLOUD_API_KEY (Vertex API key); ADC stays env-only. Anthropic keeps ANTHROPIC_API_KEY only — its
  * AUTH_TOKEN/OAUTH_TOKEN alternates stay env-only. openai-codex exposes
  * no env-key (naturally absent). Providers sharing one env var (moonshotai
  * / moonshotai-cn, opencode / opencode-go, Qwen Token Plan variants,
@@ -110,6 +110,7 @@ export const AUTH_PROVIDER_KEYS: readonly AuthProviderInfo[] = [
 	{ id: "deepseek", envVar: "DEEPSEEK_API_KEY", label: "DeepSeek" },
 	{ id: "fireworks", envVar: "FIREWORKS_API_KEY", label: "Fireworks" },
 	{ id: "google", envVar: "GEMINI_API_KEY", label: "Google" },
+	{ id: "google-vertex", envVar: "GOOGLE_CLOUD_API_KEY", label: "Google Vertex AI" },
 	{ id: "groq", envVar: "GROQ_API_KEY", label: "Groq" },
 	{ id: "huggingface", envVar: "HF_TOKEN", label: "Hugging Face" },
 	{ id: "kimi-coding", envVar: "KIMI_API_KEY", label: "Kimi For Coding" },
