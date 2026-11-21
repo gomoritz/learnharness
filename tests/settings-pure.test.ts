@@ -8,8 +8,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { appearanceVars, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
-import { clearColorOverrides, colorOverride, composeColorOverride } from "../components/settings/appearance-section.tsx";
-import { BUILTIN_THEMES, DEFAULT_THEME } from "../src/core";
+import { clearColorOverrides, composeColorOverride } from "../components/settings/appearance-section.tsx";
+import { BUILTIN_THEMES, DEFAULT_THEME, resolveThemeSlots } from "../src/core";
 import {
 	composePromptSwitch,
 	composeSearchEngine,
@@ -50,7 +50,7 @@ describe("resolveAppearance — delta over factory", () => {
 
 describe("appearanceVars — the mapping the provider applies", () => {
 	it("factory appearance on Default: the Default palette plus the type tokens", () => {
-		const vars = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
+		const vars = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark");
 		assert.equal(vars["--background"], "#141414");
 		assert.equal(vars["--accent"], "#2a2a2a", "the hover surface keeps its hand-picked value");
 		assert.equal(vars["--lh-ink-strong"], "#e6e6e6", "emphasis = text on Default");
@@ -61,7 +61,7 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	});
 
 	it("JetBrains Mono renders from the bundled face when it is not installed", () => {
-		const vars = appearanceVars(resolveAppearance({ fontFamily: "JetBrains Mono" }), mocha);
+		const vars = appearanceVars(resolveAppearance({ fontFamily: "JetBrains Mono" }), mocha.colors, "dark");
 		assert.equal(
 			vars["--font-prose"],
 			`"JetBrains Mono", var(--font-jetbrains), var(--font-sans3), ui-sans-serif, system-ui, sans-serif`,
@@ -69,17 +69,16 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	});
 
 	it("full delta: every knob lands on its token, overrides over the theme", () => {
-		const vars = appearanceVars(
-			resolveAppearance({
-				background: "#101820",
-				colors: { warning: "#fab387" },
-				fontFamily: "Georgia",
-				proseFontSize: 18,
-				sessionNameSerif: false,
-				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
-			}),
-			mocha,
-		);
+		const delta = {
+			theme: mocha.id,
+			background: "#101820",
+			colors: { warning: "#fab387" },
+			fontFamily: "Georgia",
+			proseFontSize: 18,
+			sessionNameSerif: false,
+			mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
+		};
+		const vars = appearanceVars(resolveAppearance(delta), resolveThemeSlots(delta).dark.colors, "dark");
 		assert.equal(vars["--background"], "#101820");
 		assert.equal(vars["--card"], mocha.colors.surface, "un-overridden colors stay the theme's");
 		assert.equal(vars["--lh-warning"], "#fab387");
@@ -92,8 +91,8 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	});
 
 	it("sessionNameSerif false alone: only the title token changes", () => {
-		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
-		assert.deepEqual(appearanceVars(resolveAppearance({ sessionNameSerif: false }), DEFAULT_THEME), {
+		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark");
+		assert.deepEqual(appearanceVars(resolveAppearance({ sessionNameSerif: false }), DEFAULT_THEME.colors, "dark"), {
 			...factory, "--font-title": "var(--font-prose)",
 		});
 	});
@@ -101,16 +100,14 @@ describe("appearanceVars — the mapping the provider applies", () => {
 
 describe("staleVarNames — the removal half of application (owner repro: resets never reverted)", () => {
 	it("a full delta applied, then factory: the delta-only type names go stale, colors never do", () => {
-		const fullDelta = appearanceVars(
-			resolveAppearance({
-				background: "#101820",
-				fontFamily: "Georgia",
-				sessionNameSerif: false,
-				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
-			}),
-			DEFAULT_THEME,
-		);
-		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
+		const delta = {
+			background: "#101820",
+			fontFamily: "Georgia",
+			sessionNameSerif: false,
+			mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
+		};
+		const fullDelta = appearanceVars(resolveAppearance(delta), resolveThemeSlots(delta).dark.colors, "dark");
+		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark");
 		const stale = staleVarNames(Object.keys(fullDelta), factory);
 		assert.ok(stale.includes("--font-prose"));
 		assert.ok(stale.includes("--font-title"), "serif toggle back ON must clear the title override");
@@ -120,47 +117,37 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 	});
 
 	it("no previous applications → nothing stale", () => {
-		assert.deepEqual(staleVarNames([], appearanceVars(resolveAppearance(undefined), DEFAULT_THEME)), []);
+		assert.deepEqual(staleVarNames([], appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark")), []);
 	});
 });
 
-describe("Colors block compose helpers — overrides in their two homes", () => {
+describe("Colors block compose helpers — per-slot overrides", () => {
 	const before = {
-		theme: "catppuccin-mocha",
+		themeMode: "system" as const,
 		fontFamily: "Georgia",
-		background: "#101010",
-		colors: { warning: "#fab387" },
-		mdRendering: { headingWeight: 700, boldColor: "#ff0000" },
+		light: { theme: "ivory", colors: { warning: "#fab387" } },
+		dark: { theme: "catppuccin-mocha", colors: { background: "#101010" } },
+		mdRendering: { headingWeight: 700 },
 	};
 
-	it("reads each key from its home", () => {
-		assert.equal(colorOverride(before, "background"), "#101010");
-		assert.equal(colorOverride(before, "bold"), "#ff0000");
-		assert.equal(colorOverride(before, "italic"), "");
-		assert.equal(colorOverride(before, "warning"), "#fab387");
-		assert.equal(colorOverride(undefined, "surface"), "");
-	});
-
-	it("writes each key to its home and carries the rest of the section", () => {
-		const bold = composeColorOverride(before, "bold", "#00ff00");
-		assert.deepEqual(bold.mdRendering, { headingWeight: 700, boldColor: "#00ff00" });
-		assert.equal(bold.theme, "catppuccin-mocha");
-		const surface = composeColorOverride(before, "surface", "#222222");
-		assert.deepEqual(surface.colors, { warning: "#fab387", surface: "#222222" });
-		assert.equal(surface.fontFamily, "Georgia");
+	it("writes the key into the chosen slot and carries everything else", () => {
+		const next = composeColorOverride(before, "light", "surface", "#222222");
+		assert.deepEqual(next.light, { theme: "ivory", colors: { warning: "#fab387", surface: "#222222" } });
+		assert.deepEqual(next.dark, before.dark, "the other slot is untouched");
+		assert.equal(next.fontFamily, "Georgia");
+		assert.equal(next.themeMode, "system");
 	});
 
 	it("an empty commit returns the key to the theme", () => {
-		assert.deepEqual(composeColorOverride(before, "warning", "").colors, {});
-		assert.equal(composeColorOverride(before, "background", "").background, null);
+		assert.deepEqual(composeColorOverride(before, "dark", "background", "").dark, { theme: "catppuccin-mocha", colors: {} });
 	});
 
-	it("Reset all clears every color and keeps the theme and type knobs", () => {
-		assert.deepEqual(clearColorOverrides(before), {
-			theme: "catppuccin-mocha",
-			fontFamily: "Georgia",
-			mdRendering: { headingWeight: 700 },
-		});
+	it("a slot without a stored entry gets one", () => {
+		assert.deepEqual(composeColorOverride({ themeMode: "dark" }, "light", "bold", "#ff0000").light, { colors: { bold: "#ff0000" } });
+	});
+
+	it("Reset all clears one slot and keeps its theme, the other slot and the type knobs", () => {
+		assert.deepEqual(clearColorOverrides(before, "light"), { ...before, light: { theme: "ivory" } });
 	});
 });
 

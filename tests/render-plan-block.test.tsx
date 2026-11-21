@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PlanBlock, PlanPopup, type PopupMessage } from "../components/plan-block.tsx";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
-import { DEFAULT_THEME } from "../src/core/themes.ts";
 import {
 	blockLayout,
 	chartMeasure,
@@ -260,7 +259,7 @@ describe("plan block render", () => {
 		assert.match(html, /max-width:162\.91px/); // (96+16) × 16/11: 11px labels reach at most the 16px prose size
 		// The cap follows the reading size picked in Settings.
 		const big = renderToStaticMarkup(
-			<AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialTheme={DEFAULT_THEME}>
+			<AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialCustoms={[]} initialMode="dark">
 				<PlanBlock data={data} onOpen={() => {}} />
 			</AppearanceProvider>,
 		);

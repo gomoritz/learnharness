@@ -5,11 +5,12 @@
  * Appearance controls resolve against the factory in the provider; writes
  * PUT the whole appearance section and hand the delta back so the CSS
  * variables move IMMEDIATELY (the section's whole point — it must DO
- * something). Theme wave (2026-11-04): the theme grid (./theme-cards.tsx)
- * sits on top and sets every color; the "Colors" block below holds one
- * hex override per theme color (empty = the theme's), kept across theme
- * switches; "Typography" holds the type knobs. Hex inputs commit on
- * blur/Enter.
+ * something). Theme wave (2026-11-04), light/dark slots (2026-11-21): a
+ * Light | Dark | System mode switch, then one theme grid per slot
+ * (./theme-cards.tsx); the "Colors" block below holds one hex override per
+ * theme color FOR ONE SLOT (its own Light | Dark switch, defaulting to the
+ * slot on screen; empty = the theme's), kept across theme switches;
+ * "Typography" holds the type knobs. Hex inputs commit on blur/Enter.
  *
  * Graph graying (owner, 2026-09-20) follows the graph viewer's render-panel
  * convention: the whole row dims when a parent is off (stored values
@@ -25,10 +26,9 @@
  * The custom-family input inside the menu is the manual escape path.
  * Empty/unset keeps meaning Source Sans 3.
  *
- * Overrides live in two homes by design: `background` and
- * `mdRendering.boldColor/italicColor` keep their pre-theme keys (existing
- * records keep their colors); the other nine sit in `colors`. core/
- * themes.ts effectiveColors is the one place they merge.
+ * Every theme write starts from materializeThemeSlots (core/themes.ts):
+ * a pre-slot record is converted on its first theme write, its single
+ * theme and overrides becoming the slot of that theme's mode.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -37,11 +37,15 @@ import {
 	TRANSCRIPT_WIDTH_MAX_REM,
 	TRANSCRIPT_WIDTH_MIN_REM,
 	TRANSCRIPT_WIDTH_STEP_REM,
+	materializeThemeSlots,
 	resolveSettings,
+	resolveThemeSlots,
 	THEME_COLOR_KEYS,
 	type AppearanceSettings,
 	type GraphSettings,
 	type ThemeColorKey,
+	type ThemeMode,
+	type ThemeModeSetting,
 } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { useInteractionLayers } from "@/components/interaction-layers";
@@ -49,7 +53,7 @@ import { Hint } from "@/components/ui/hint";
 import { BUNDLED_READING_FONTS, useAppearance } from "./appearance.tsx";
 import { FontMenuList } from "./model-menu";
 import { ThemeCards } from "./theme-cards.tsx";
-import { CommitInput, SettingsMenuTrigger, SettingsRow, Toggle } from "./controls.tsx";
+import { CommitInput, SettingsMenuTrigger, SettingsRow, SettingsSegmentedControl, Toggle } from "./controls.tsx";
 
 /** The slider position past the last width step: Full (no cap). */
 const TRANSCRIPT_FULL_POSITION = TRANSCRIPT_WIDTH_MAX_REM + TRANSCRIPT_WIDTH_STEP_REM;
@@ -172,39 +176,39 @@ const LEGACY_TESTIDS: Partial<Record<ThemeColorKey, string>> = {
 	italic: "input-italic-color",
 };
 
-/** The stored override for one theme color ("" = none). Pure — exported
- *  for tests. */
-export function colorOverride(appearance: AppearanceSettings | undefined, key: ThemeColorKey): string {
-	if (key === "background") return appearance?.background ?? "";
-	if (key === "bold") return appearance?.mdRendering?.boldColor ?? "";
-	if (key === "italic") return appearance?.mdRendering?.italicColor ?? "";
-	return appearance?.colors?.[key] ?? "";
-}
+/** The Mode switch's options (core THEME_MODE_SETTINGS order). */
+const THEME_MODE_OPTIONS: readonly { value: ThemeModeSetting; label: string }[] = [
+	{ value: "light", label: "Light" },
+	{ value: "dark", label: "Dark" },
+	{ value: "system", label: "System" },
+];
 
-/** Compose one override into the section ("" = back to the theme's).
- *  Every other field rides along untouched. Pure — exported for tests. */
+const SLOT_OPTIONS: readonly { value: ThemeMode; label: string }[] = [
+	{ value: "light", label: "Light" },
+	{ value: "dark", label: "Dark" },
+];
+
+/** Compose one slot override into a slot-shaped section ("" = back to the
+ *  theme's). Every other field rides along untouched. Pure — exported for
+ *  tests. */
 export function composeColorOverride(
-	appearance: AppearanceSettings | undefined,
+	appearance: AppearanceSettings,
+	slot: ThemeMode,
 	key: ThemeColorKey,
 	value: string,
 ): AppearanceSettings {
-	const v = value === "" ? null : value;
-	if (key === "background") return { ...appearance, background: v };
-	if (key === "bold") return { ...appearance, mdRendering: { ...appearance?.mdRendering, boldColor: v } };
-	if (key === "italic") return { ...appearance, mdRendering: { ...appearance?.mdRendering, italicColor: v } };
-	const colors = { ...appearance?.colors };
-	if (v === null) delete colors[key];
-	else colors[key] = v;
-	return { ...appearance, colors };
+	const current = appearance[slot] ?? {};
+	const colors = { ...current.colors };
+	if (value === "") delete colors[key];
+	else colors[key] = value;
+	return { ...appearance, [slot]: { ...current, colors } };
 }
 
-/** "Reset all": every color back to the theme's; type knobs untouched. */
-export function clearColorOverrides(appearance: AppearanceSettings | undefined): AppearanceSettings {
-	const { background: _bg, colors: _colors, ...rest } = appearance ?? {};
-	const md = appearance?.mdRendering;
-	if (!md) return rest;
-	const { boldColor: _b, italicColor: _i, ...mdRest } = md;
-	return { ...rest, mdRendering: mdRest };
+/** "Reset all": one slot's colors back to its theme's; the other slot and
+ *  the type knobs untouched. Pure — exported for tests. */
+export function clearColorOverrides(appearance: AppearanceSettings, slot: ThemeMode): AppearanceSettings {
+	const { colors: _colors, ...rest } = appearance[slot] ?? {};
+	return { ...appearance, [slot]: rest };
 }
 
 function ColorOverrideRow({
@@ -252,8 +256,18 @@ export function AppearanceSection({
 	/** PUT the whole appearance section; the page re-applies on success. */
 	onSectionChange: (next: AppearanceSettings) => boolean | Promise<boolean>;
 }) {
-	const { appearance: resolved, activeTheme, colors, themes, refreshThemes } = useAppearance();
+	const { appearance: resolved, resolvedMode, themes, refreshThemes } = useAppearance();
 	const md = appearance?.mdRendering;
+	// The slots as the dialog's record mirror holds them (like every other
+	// control here); the provider only says which slot is on screen.
+	const customs = themes.filter((t) => !t.builtin);
+	const slots = resolveThemeSlots(appearance, customs);
+	// Every theme write composes onto the slot-shaped record.
+	const slotRecord = () => materializeThemeSlots(appearance, customs);
+	// Which slot the Colors block edits: the one on screen, until picked.
+	const [editSlot, setEditSlot] = useState<ThemeMode>(resolvedMode);
+	useEffect(() => setEditSlot(resolvedMode), [resolvedMode]);
+	const edited = slots[editSlot];
 
 	// The font dropdown's open state + its enumeration cache. undefined =
 	// not enumerated yet (desktop: click-bound queryLocalFonts pending);
@@ -337,45 +351,83 @@ export function AppearanceSection({
 
 	return (
 		<>
-			<ThemeCards
-				themes={themes}
-				active={activeTheme}
-				appearance={appearance}
-				onSelect={(id) => onSectionChange({ ...appearance, theme: id })}
-				onImported={() => void refreshThemes()}
-				onRemoved={(removed) => {
-					void refreshThemes();
-					// The server already fell back to Default; the write keeps the
-					// dialog's record mirror and the live vars in step with it.
-					if (removed.id === activeTheme.id) onSectionChange({ ...appearance, theme: "default" });
-				}}
-			/>
+			<SettingsRow
+				label="Mode"
+				hint={slots.themeMode === "system" ? `Follows your system · ${resolvedMode} now` : "Light or dark theme, or follow your system"}
+				testid="row-theme-mode"
+			>
+				<SettingsSegmentedControl
+					label="Theme mode"
+					options={THEME_MODE_OPTIONS}
+					value={slots.themeMode}
+					testidPrefix="theme-mode"
+					onChange={(themeMode) => onSectionChange({ ...slotRecord(), themeMode })}
+				/>
+			</SettingsRow>
+			{(["light", "dark"] as const).map((mode) => (
+				<div key={mode} className="mt-4">
+					<ThemeCards
+						mode={mode}
+						themes={themes.filter((t) => t.mode === mode)}
+						slot={slots[mode]}
+						onScreen={mode === resolvedMode}
+						showImport={mode === "dark"}
+						onSelect={(id) => {
+							const record = slotRecord();
+							onSectionChange({ ...record, [mode]: { ...record[mode], theme: id } });
+						}}
+						onImported={() => void refreshThemes()}
+						onRemoved={(removed) => {
+							void refreshThemes();
+							// The server already reset every slot that used it; the write
+							// keeps the dialog's record mirror and the live vars in step.
+							const record = slotRecord();
+							for (const m of ["light", "dark"] as const) {
+								if (record[m]?.theme === removed.id) {
+									const { theme: _gone, ...rest } = record[m]!;
+									record[m] = rest;
+								}
+							}
+							onSectionChange(record);
+						}}
+					/>
+				</div>
+			))}
 			<div data-testid="group-colors" className="mt-5 flex flex-col gap-2">
 				<div className="flex items-end justify-between gap-4">
 					<p className="text-xs uppercase tracking-widest text-muted-foreground">
 						Colors{" "}
 						<span className="normal-case tracking-normal text-muted-foreground/70">
-							· overrides on top of the theme, kept when you switch
+							· overrides for the {editSlot} theme ({edited.theme.name}), kept when you switch
 						</span>
 					</p>
-					<button
-						type="button"
-						data-testid="colors-reset"
-						onClick={() => onSectionChange(clearColorOverrides(appearance))}
-						className="h-6 shrink-0 rounded-sm px-2 font-ui text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-					>
-						Reset all
-					</button>
+					<span className="flex shrink-0 items-center gap-2">
+						<SettingsSegmentedControl
+							label="Override slot"
+							options={SLOT_OPTIONS}
+							value={editSlot}
+							testidPrefix="colors-slot"
+							onChange={setEditSlot}
+						/>
+						<button
+							type="button"
+							data-testid="colors-reset"
+							onClick={() => onSectionChange(clearColorOverrides(slotRecord(), editSlot))}
+							className="h-6 shrink-0 rounded-sm px-2 font-ui text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						>
+							Reset all
+						</button>
+					</span>
 				</div>
 				<div className="grid grid-cols-2 gap-x-10 gap-y-2">
 					{THEME_COLOR_KEYS.map((key) => (
 						<ColorOverrideRow
 							key={key}
 							colorKey={key}
-							value={colorOverride(appearance, key)}
-							themeColor={activeTheme.colors[key]}
-							effective={colors[key]}
-							onCommit={(v) => onSectionChange(composeColorOverride(appearance, key, v))}
+							value={edited.overrides[key] ?? ""}
+							themeColor={edited.theme.colors[key]}
+							effective={edited.colors[key]}
+							onCommit={(v) => onSectionChange(composeColorOverride(slotRecord(), editSlot, key, v))}
 						/>
 					))}
 				</div>

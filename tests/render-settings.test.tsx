@@ -17,7 +17,7 @@ import { InteractionLayersProvider } from "../components/interaction-layers.tsx"
 import { TOGGLE_TOOLS, AgentSection } from "../components/settings/agent-section.tsx";
 import { AppearanceSection, GraphSection } from "../components/settings/appearance-section.tsx";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
-import { BUILTIN_THEMES, resolveTheme, THEME_COLOR_KEYS, type AppearanceSettings, type Theme } from "../src/core/index.ts";
+import { BUILTIN_THEMES, resolveThemeSlots, THEME_COLOR_KEYS, type AppearanceSettings, type Theme } from "../src/core/index.ts";
 import { KeysSection } from "../components/settings/keys-section.tsx";
 import { KeyboardSection } from "../components/settings/keyboard-section.tsx";
 import type { GraphSettings } from "../src/core/index.ts";
@@ -362,9 +362,9 @@ describe("KeysSection (thin SSR)", () => {
 /** The section as the app mounts it: under the provider the layout feeds
  *  from the record (the active theme resolved server-side). */
 function renderAppearance(appearance: AppearanceSettings | undefined, customs: Theme[] = []): string {
-	const theme = resolveTheme(appearance?.theme, customs);
+	const { themeMode } = resolveThemeSlots(appearance, customs);
 	return renderToStaticMarkup(
-		<AppearanceProvider initialAppearance={appearance} initialTheme={theme}>
+		<AppearanceProvider initialAppearance={appearance} initialCustoms={customs} initialMode={themeMode === "system" ? null : themeMode}>
 			<AppearanceSection appearance={appearance} onSectionChange={() => {}} />
 		</AppearanceProvider>,
 	);
@@ -380,17 +380,22 @@ describe("AppearanceSection (thin SSR)", () => {
 		}
 	});
 
-	it("the theme grid lists every preset; the stored theme is pressed", () => {
+	it("the two grids list every preset by mode; each slot's theme is pressed", () => {
 		const html = renderAppearance({ theme: "catppuccin-latte" });
 		for (const t of BUILTIN_THEMES) assert.ok(html.includes(`data-testid="theme-card-${t.id}"`), t.id);
-		assert.ok(tagOf(html, "theme-card-catppuccin-latte").includes('aria-pressed="true"'));
-		for (const t of BUILTIN_THEMES.filter((t) => t.id !== "catppuccin-latte")) {
+		const lightGrid = html.slice(html.indexOf('data-testid="row-theme-light"'), html.indexOf('data-testid="row-theme-dark"'));
+		for (const t of BUILTIN_THEMES) assert.equal(lightGrid.includes(`theme-card-${t.id}"`), t.mode === "light", t.id);
+		const pressedIds = ["catppuccin-latte", "default"];
+		for (const id of pressedIds) assert.ok(tagOf(html, `theme-card-${id}`).includes('aria-pressed="true"'), id);
+		for (const t of BUILTIN_THEMES.filter((t) => !pressedIds.includes(t.id))) {
 			assert.ok(tagOf(html, `theme-card-${t.id}`).includes('aria-pressed="false"'), t.id);
 		}
-		assert.equal((html.match(/lucide-check/g) ?? []).length, 1, "one check, on the selected card");
-		assert.match(html, /Catppuccin Latte · light · sets every color below/);
+		assert.equal((html.match(/lucide-check/g) ?? []).length, 2, "one check per slot");
+		assert.match(html, /Catppuccin Latte · on screen now/);
+		assert.ok(tagOf(html, "theme-mode-light").includes('aria-checked="true"'), "a legacy light theme pins light");
 		assert.ok(html.includes('data-testid="theme-import"'));
-		assert.ok(html.includes('data-testid="theme-export"'));
+		assert.ok(html.includes('data-testid="theme-export-light"'));
+		assert.ok(html.includes('data-testid="theme-export-dark"'));
 		assert.ok(!html.includes("theme-remove-"), "presets cannot be removed");
 	});
 

@@ -7,7 +7,6 @@ import { parseHTML } from "linkedom";
 import { AnsweredCard } from "../components/answered-card.tsx";
 import { questionCardStandIn } from "../components/question-dock.tsx";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
-import { DEFAULT_THEME } from "../src/core/themes.ts";
 import { buildAnswer, normalizeOptions, resolveCorrect, type QuestionData } from "../src/core/question-core.ts";
 
 // Synthetic geometry seam (linkedom has no layout): every box is 100px tall
@@ -63,7 +62,7 @@ async function mount(adaptiveQuestions: boolean, toolCallId = "q1") {
 	const root = createRoot(host);
 	const answer = buildAnswer(quizQD(), { values: ["Zero"], confidence: 70, thinking: "Gravity keeps acting." });
 	await act(async () => root.render(
-		<AppearanceProvider initialAppearance={{ adaptiveQuestions }} initialTheme={DEFAULT_THEME}>
+		<AppearanceProvider initialAppearance={{ adaptiveQuestions }} initialCustoms={[]} initialMode="dark">
 			<AnsweredCard answer={answer} input={quizInput} toolCallId={toolCallId} />
 		</AppearanceProvider>,
 	));

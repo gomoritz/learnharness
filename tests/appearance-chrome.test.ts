@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { after, beforeEach, it } from "node:test";
-import { BUILTIN_THEMES, DEFAULT_THEME, effectiveColors, resolveTheme, sanitizeThemeFile, THEME_COLOR_KEYS } from "../src/core/themes.ts";
+import { BUILTIN_THEMES, DEFAULT_THEME, resolveTheme, resolveThemeSlots, sanitizeThemeFile, THEME_COLOR_KEYS } from "../src/core/themes.ts";
 
 const require = createRequire(import.meta.url);
 const { PRESET_APPEARANCE, COLOR_KEYS, normalizeAppearance, themeSourceFor, serverDataDir, readAppearance, chromeColors } = require("../electron/appearance-chrome.cjs");
@@ -20,7 +20,7 @@ it("native boot projection stays identical to every core preset and its color vo
 		assert.deepEqual(PRESET_APPEARANCE[theme.id], { mode: theme.mode, background: theme.colors.background });
 		for (const background of [undefined, "#101010", "#fff"]) {
 			record({ theme: theme.id, background });
-			assert.deepEqual(readAppearance(data), { mode: theme.mode, background: effectiveColors(theme, { background }).background });
+			assert.deepEqual(readAppearance(data), { mode: theme.mode, background: resolveThemeSlots({ theme: theme.id, background })[theme.mode].colors.background, followSystem: false });
 		}
 	}
 });
@@ -32,27 +32,27 @@ it("selected custom files resolve before a renderer; missing or malformed files 
 		record({ theme: "custom-paper" });
 		const parsed = sanitizeThemeFile(raw);
 		const resolved = resolveTheme("custom-paper", parsed ? [{ ...parsed, id: "custom-paper", builtin: false }] : []);
-		assert.deepEqual(readAppearance(data), { mode: resolved.mode, background: resolved.colors.background });
+		assert.deepEqual(readAppearance(data), { mode: resolved.mode, background: resolved.colors.background, followSystem: false });
 	}
 	fs.unlinkSync(path.join(data, "themes", "custom-paper.json"));
 	record({ theme: "custom-paper", background: "#abc" });
-	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#abc" });
+	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#abc", followSystem: false });
 	for (const theme of ["../outside", "__proto__", "constructor", "unknown"]) {
 		record({ theme });
-		assert.deepEqual(readAppearance(data), { mode: "dark", background: DEFAULT_THEME.colors.background });
+		assert.deepEqual(readAppearance(data), { mode: "dark", background: DEFAULT_THEME.colors.background, followSystem: false });
 	}
 });
 
 it("absent and corrupt records fall back; renderer reports are normalized", () => {
-	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414" });
+	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414", followSystem: false });
 	fs.writeFileSync(path.join(data, "settings.json"), "{");
-	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414" });
+	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414", followSystem: false });
 	for (const theme of [null, [], {}, { toString: null }, 123, true]) {
 		record({ theme });
-		assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414" });
+		assert.deepEqual(readAppearance(data), { mode: "dark", background: "#141414", followSystem: false });
 	}
-	assert.deepEqual(normalizeAppearance({ mode: "light", background: "#fff" }), { mode: "light", background: "#fff" });
-	assert.deepEqual(normalizeAppearance({ mode: "system", background: "white" }), { mode: "dark", background: null });
+	assert.deepEqual(normalizeAppearance({ mode: "light", background: "#fff" }), { mode: "light", background: "#fff", followSystem: false });
+	assert.deepEqual(normalizeAppearance({ mode: "system", background: "white" }), { mode: "dark", background: null, followSystem: false });
 });
 
 it("native glyphs contrast against final paint, not the theme's mode label", () => {
@@ -62,6 +62,35 @@ it("native glyphs contrast against final paint, not the theme's mode label", () 
 	}
 	assert.equal(themeSourceFor("dark"), "system", "retain main's OS-following native menus/dialogs");
 	assert.equal(themeSourceFor("light"), "light");
+	assert.equal(themeSourceFor("light", true), "system", "system theme mode keeps the OS appearance visible");
+	assert.equal(themeSourceFor("dark", true), "system");
+	assert.deepEqual(normalizeAppearance({ mode: "light", background: "#fff", followSystem: true }), { mode: "light", background: "#fff", followSystem: true });
+});
+
+it("slot records: the pinned slot, or the OS's in system mode — mirroring core resolveThemeSlots", () => {
+	const custom = { ...BUILTIN_THEMES.find(t => t.id === "rose-pine-dawn")!, name: "Custom Paper" };
+	fs.writeFileSync(path.join(data, "themes", "custom-paper.json"), JSON.stringify(custom));
+	const customs = [{ ...sanitizeThemeFile(custom)!, id: "custom-paper", builtin: false }];
+	const records = [
+		{ themeMode: "light" },
+		{ themeMode: "dark" },
+		{ themeMode: "system" },
+		{ themeMode: "light", light: { theme: "custom-paper" } },
+		{ themeMode: "system", light: { theme: "ivory", colors: { background: "#fff" } }, dark: { theme: "gruvbox-dark" } },
+		{ themeMode: "light", light: { theme: "catppuccin-mocha" } },
+		{ themeMode: "dark", dark: { theme: "gone", colors: { background: "bad" } } },
+		{ themeMode: "system", theme: "ivory", background: "#000" },
+	];
+	for (const appearance of records) {
+		record(appearance);
+		for (const systemDark of [true, false]) {
+			const slots = resolveThemeSlots(appearance as never, customs);
+			const mode = slots.themeMode === "system" ? (systemDark ? "dark" : "light") : slots.themeMode;
+			assert.deepEqual(readAppearance(data, systemDark), {
+				mode, background: slots[mode].colors.background, followSystem: slots.themeMode === "system",
+			}, JSON.stringify({ appearance, systemDark }));
+		}
+	}
 });
 
 it("external desktop development reads the server's directory rather than the shell's -dev profile", () => {

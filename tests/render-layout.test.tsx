@@ -25,9 +25,9 @@ after(() => fs.rmSync(TMP_DATA, { recursive: true, force: true }));
 
 /** The <html> the layout renders from a boot (className + style). */
 function html(): string {
-	const { theme, vars } = readThemeBoot();
+	const { mode, vars } = readThemeBoot();
 	return renderToStaticMarkup(
-		<html className={theme.mode} style={vars as React.CSSProperties}>
+		<html className={mode ?? ""} style={vars as React.CSSProperties}>
 			<body />
 		</html>,
 	);

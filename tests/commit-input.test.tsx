@@ -388,7 +388,7 @@ it("Settings ACK authority survives close/reopen and protects the live appearanc
 		return ++writes === 1 ? first.promise : second.promise;
 	});
 	function Probe() { settings = useSettingsDialog(); liveSize = useAppearance().appearance.proseFontSize; return null; }
-	await f.render(<AppearanceProvider initialAppearance={stored.appearance} initialTheme={DEFAULT_THEME}><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
+	await f.render(<AppearanceProvider initialAppearance={stored.appearance} initialCustoms={[]} initialMode="dark"><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
 	await act(async () => settings.open("appearance"));
 	let input = f.input('[data-testid="input-prose-size"]');
 	await f.type(input, "16"); await f.key(input, "Escape");
@@ -418,7 +418,7 @@ it("a newer nonappearance acknowledgement applies its full canonical live appear
 		return section === "appearance" ? appearanceSave.promise : generalSave.promise;
 	});
 	function Probe() { settings = useSettingsDialog(); liveSize = useAppearance().appearance.proseFontSize; return null; }
-	await f.render(<AppearanceProvider initialAppearance={stored.appearance} initialTheme={DEFAULT_THEME}><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
+	await f.render(<AppearanceProvider initialAppearance={stored.appearance} initialCustoms={[]} initialMode="dark"><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
 	await act(async () => settings.open("appearance"));
 	const input = f.input('[data-testid="input-prose-size"]');
 	await f.type(input, "16"); await f.key(input, "Escape");
@@ -445,7 +445,7 @@ for (const arrival of ["before", "after", "failure-after"] as const) {
 			return ++reads === 2 ? reopenedRead.promise : Response.json({ settings: old });
 		});
 		function Probe() { settings = useSettingsDialog(); liveSize = useAppearance().appearance.proseFontSize; return null; }
-		await f.render(<AppearanceProvider initialAppearance={old.appearance} initialTheme={DEFAULT_THEME}><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
+		await f.render(<AppearanceProvider initialAppearance={old.appearance} initialCustoms={[]} initialMode="dark"><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
 		await act(async () => settings.open("appearance"));
 		const input = f.input('[data-testid="input-prose-size"]');
 		await f.type(input, "20"); await f.key(input, "Escape");
@@ -477,12 +477,12 @@ it("server appearance refresh cannot undo a newer canonical live save", async ()
 		return Response.json({ settings: { version: 1, appearance: { proseFontSize: 12 } } });
 	});
 	function Probe() { settings = useSettingsDialog(); liveSize = useAppearance().appearance.proseFontSize; return null; }
-	await f.render(<AppearanceProvider initialAppearance={{ proseFontSize: 12 }} initialTheme={DEFAULT_THEME}><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
+	await f.render(<AppearanceProvider initialAppearance={{ proseFontSize: 12 }} initialCustoms={[]} initialMode="dark"><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
 	assert.equal(reads, 0, "no startup settings GET can race a canonical save");
 	await act(async () => settings.open("appearance"));
 	const input = f.input('[data-testid="input-prose-size"]');
 	await f.type(input, "20"); await f.key(input, "Escape");
 	assert.equal(input.value, "20"); assert.equal(liveSize, 20);
-	await f.render(<AppearanceProvider initialAppearance={{ proseFontSize: 12 }} initialTheme={DEFAULT_THEME}><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
+	await f.render(<AppearanceProvider initialAppearance={{ proseFontSize: 12 }} initialCustoms={[]} initialMode="dark"><SettingsDialogProvider><Probe /></SettingsDialogProvider></AppearanceProvider>);
 	assert.equal(input.value, "20"); assert.equal(liveSize, 20);
 }));

@@ -11,7 +11,6 @@ import { ServerEventsProvider } from "../components/server-events.tsx";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
 import { SettingsDialogProvider } from "../components/settings/settings-dialog.tsx";
 import { SidebarProvider } from "../components/sidebar.tsx";
-import { DEFAULT_THEME } from "../src/core/themes.ts";
 
 // `next dev` server-renders every chat page with React's development build,
 // which seals each useRef object (Object.seal). A property assigned to a ref
@@ -26,7 +25,7 @@ describe("chat server render (React development build)", () => {
 			<PathnameContext.Provider value="/chat/chat_dev_render">
 			<ServerEventsProvider>
 				<PluginsProvider>
-					<AppearanceProvider initialAppearance={undefined} initialTheme={DEFAULT_THEME}>
+					<AppearanceProvider initialAppearance={undefined} initialCustoms={[]} initialMode="dark">
 						<SidebarProvider>
 							<ActivityProvider>
 								<InteractionLayersProvider>

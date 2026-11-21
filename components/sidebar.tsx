@@ -84,8 +84,9 @@ declare global {
 			subscriptions?: NativeSubscriptionControlBridge;
 			expandWindow: () => void;
 			/** Native chrome follows the active theme (theme wave): main sets
-			 *  themeSource and repaints the window background / overlay. */
-			setAppearance?: (a: { mode: ThemeMode; background: string }) => void;
+			 *  themeSource ("system" while followSystem) and repaints the
+			 *  window background / overlay. */
+			setAppearance?: (a: { mode: ThemeMode; background: string; followSystem: boolean }) => void;
 			/** The zoom truth (owner round 7): subscribes to "lh:zoom" pushes; returns unsubscribe. */
 			onZoom?: (cb: (factor: number) => void) => () => void;
 			getZoom?: () => Promise<number>;

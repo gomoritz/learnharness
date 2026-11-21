@@ -6,10 +6,10 @@
  *
  * A theme is 12 hex colors plus the variant it renders as (dark/light).
  * Built-in presets live here; custom ones are JSON files under
- * config.THEMES_DIR (the ThemeStore port). The settings record names the
- * active theme by id and carries per-color OVERRIDES that survive every
- * theme switch (owner ruling: losing user config is worse than an odd
- * combination).
+ * config.THEMES_DIR (the ThemeStore port). The settings record names a
+ * light and a dark theme (slots, each with per-color OVERRIDES that survive
+ * theme switches) and whether the light slot, the dark slot or the OS
+ * decides what renders — see "Light/dark slots" below.
  */
 
 import type { AppearanceSettings } from "./settings.ts";
@@ -220,21 +220,149 @@ export function resolveTheme(id: string | null | undefined, customs: readonly Th
 	return BUILTIN_THEMES.find((t) => t.id === id) ?? customs.find((t) => t.id === id) ?? DEFAULT_THEME;
 }
 
-/** The single place the two override homes merge onto the theme: the
- *  legacy keys (`background`, `mdRendering.boldColor/italicColor`) and
- *  `colors`. A null/absent override = the theme's color. */
-export function effectiveColors(
-	theme: ThemeFile,
-	appearance: Pick<AppearanceSettings, "background" | "colors" | "mdRendering"> | undefined,
-): ThemeColors {
-	const out: ThemeColors = { ...theme.colors };
-	if (!appearance) return out;
-	if (isHex(appearance.background)) out.background = appearance.background;
-	if (isHex(appearance.mdRendering?.boldColor)) out.bold = appearance.mdRendering.boldColor;
-	if (isHex(appearance.mdRendering?.italicColor)) out.italic = appearance.mdRendering.italicColor;
-	for (const key of COLOR_OVERRIDE_KEYS) {
-		const v = appearance.colors?.[key];
+// ─── Light/dark slots (2026-11-21) ──────────────────────────────────────────
+//
+// The record holds TWO themes — one light, one dark — each with its own
+// overrides, and a mode choice: pin the light slot, pin the dark slot, or
+// follow the OS (prefers-color-scheme). A record written before slots
+// existed (`themeMode` absent) is read through the legacy keys: its single
+// theme and overrides become the slot of that theme's mode, and the mode
+// pins that slot — so an old record renders exactly as before.
+
+/** The user's mode choice: one slot pinned, or the OS decides. */
+export type ThemeModeSetting = ThemeMode | "system";
+
+/** Valid `appearance.themeMode` values (the Settings segmented order). */
+export const THEME_MODE_SETTINGS = ["light", "dark", "system"] as const;
+
+export function isThemeModeSetting(value: unknown): value is ThemeModeSetting {
+	return value === "light" || value === "dark" || value === "system";
+}
+
+/** One slot's overrides: any of the twelve colors (null/absent = the theme's). */
+export type SlotColorOverrides = Partial<Record<ThemeColorKey, string | null>>;
+
+/** `appearance.light` / `appearance.dark` as stored. */
+export interface ThemeSlotSettings {
+	/** Theme id; absent, gone or of the other mode = the slot's default. */
+	theme?: string;
+	colors?: SlotColorOverrides;
+}
+
+/** What an empty slot shows: the original dark palette, and Latte. */
+export const DEFAULT_SLOT_THEME_IDS: Readonly<Record<ThemeMode, string>> = {
+	light: "catppuccin-latte",
+	dark: DEFAULT_THEME_ID,
+};
+
+/** A slot resolved against the catalog. */
+export interface ResolvedThemeSlot {
+	theme: Theme;
+	/** The stored overrides (hex only; nulls dropped). */
+	overrides: Partial<Record<ThemeColorKey, string>>;
+	/** The theme with every override applied — what the slot renders. */
+	colors: ThemeColors;
+}
+
+export interface ResolvedThemeSlots {
+	themeMode: ThemeModeSetting;
+	light: ResolvedThemeSlot;
+	dark: ResolvedThemeSlot;
+}
+
+/** The theme a slot renders: its id among presets and customs when the
+ *  mode matches, else the slot's default preset. */
+export function resolveSlotTheme(id: string | null | undefined, mode: ThemeMode, customs: readonly Theme[] = []): Theme {
+	const found = id ? [...BUILTIN_THEMES, ...customs].find((t) => t.id === id) : undefined;
+	if (found && found.mode === mode) return found;
+	return BUILTIN_THEMES.find((t) => t.id === DEFAULT_SLOT_THEME_IDS[mode])!;
+}
+
+/** Hex-only overrides (null/invalid entries mean "the theme's"). */
+function cleanOverrides(colors: SlotColorOverrides | undefined): Partial<Record<ThemeColorKey, string>> {
+	const out: Partial<Record<ThemeColorKey, string>> = {};
+	for (const key of THEME_COLOR_KEYS) {
+		const v = colors?.[key];
 		if (isHex(v)) out[key] = v;
+	}
+	return out;
+}
+
+/** The theme with the overrides applied. */
+export function applyOverrides(theme: ThemeFile, overrides: SlotColorOverrides | undefined): ThemeColors {
+	return { ...theme.colors, ...cleanOverrides(overrides) };
+}
+
+/** The pre-slot override homes (`background`, `colors`,
+ *  `mdRendering.boldColor/italicColor`) as one twelve-key map. */
+function legacyOverrides(a: AppearanceSettings | undefined): SlotColorOverrides {
+	const out: SlotColorOverrides = {};
+	if (isHex(a?.background)) out.background = a.background;
+	if (isHex(a?.mdRendering?.boldColor)) out.bold = a.mdRendering.boldColor;
+	if (isHex(a?.mdRendering?.italicColor)) out.italic = a.mdRendering.italicColor;
+	for (const key of COLOR_OVERRIDE_KEYS) {
+		const v = a?.colors?.[key];
+		if (isHex(v)) out[key] = v;
+	}
+	return out;
+}
+
+function resolveSlot(slot: ThemeSlotSettings | undefined, mode: ThemeMode, customs: readonly Theme[]): ResolvedThemeSlot {
+	const theme = resolveSlotTheme(slot?.theme, mode, customs);
+	return { theme, overrides: cleanOverrides(slot?.colors), colors: applyOverrides(theme, slot?.colors) };
+}
+
+/** The record's slots in their stored shape — legacy records converted
+ *  (see the section comment). */
+function storedSlots(a: AppearanceSettings | undefined, customs: readonly Theme[]): {
+	themeMode: ThemeModeSetting;
+	light: ThemeSlotSettings | undefined;
+	dark: ThemeSlotSettings | undefined;
+} {
+	if (isThemeModeSetting(a?.themeMode)) return { themeMode: a.themeMode, light: a.light, dark: a.dark };
+	const legacy = resolveTheme(a?.theme, customs);
+	const slot: ThemeSlotSettings = { theme: legacy.id, colors: legacyOverrides(a) };
+	return { themeMode: legacy.mode, [legacy.mode]: slot, [legacy.mode === "light" ? "dark" : "light"]: undefined } as {
+		themeMode: ThemeModeSetting;
+		light: ThemeSlotSettings | undefined;
+		dark: ThemeSlotSettings | undefined;
+	};
+}
+
+/** THE resolution: the mode choice and both slots, ready to render. */
+export function resolveThemeSlots(a: AppearanceSettings | undefined, customs: readonly Theme[] = []): ResolvedThemeSlots {
+	const s = storedSlots(a, customs);
+	return { themeMode: s.themeMode, light: resolveSlot(s.light, "light", customs), dark: resolveSlot(s.dark, "dark", customs) };
+}
+
+/** The custom theme ids a record may render (so a reader loads only those files). */
+export function referencedThemeIds(a: AppearanceSettings | undefined): string[] {
+	const ids = [a?.theme, a?.light?.theme, a?.dark?.theme].filter((id): id is string => isThemeId(id) && !isBuiltinThemeId(id));
+	return [...new Set(ids)];
+}
+
+/** The slot on screen: the pinned one, or the OS's. */
+export function activeThemeMode(themeMode: ThemeModeSetting, systemDark: boolean): ThemeMode {
+	return themeMode === "system" ? (systemDark ? "dark" : "light") : themeMode;
+}
+
+/** The record in slot shape: legacy keys converted and dropped. Every
+ *  theme write goes through this, so the first one migrates the record. */
+export function materializeThemeSlots(a: AppearanceSettings | undefined, customs: readonly Theme[] = []): AppearanceSettings {
+	const s = storedSlots(a, customs);
+	const { theme: _t, background: _b, colors: _c, ...rest } = a ?? {};
+	const out: AppearanceSettings = { ...rest, themeMode: s.themeMode };
+	for (const mode of ["light", "dark"] as const) {
+		const slot = s[mode];
+		const overrides = cleanOverrides(slot?.colors);
+		const next: ThemeSlotSettings = {};
+		if (slot?.theme) next.theme = slot.theme;
+		if (Object.keys(overrides).length) next.colors = overrides;
+		out[mode] = next;
+	}
+	if (rest.mdRendering) {
+		const { boldColor: _bc, italicColor: _ic, ...md } = rest.mdRendering;
+		out.mdRendering = md;
 	}
 	return out;
 }
@@ -286,8 +414,8 @@ export function themeVars(c: ThemeColors, mode: ThemeMode): Record<string, strin
 	};
 }
 
-/** Export: the active theme with every override applied — importing the
- *  file back reproduces exactly what is on screen. */
-export function exportThemeFile(theme: ThemeFile, appearance: AppearanceSettings | undefined): ThemeFile {
-	return { name: theme.name, mode: theme.mode, colors: effectiveColors(theme, appearance) };
+/** Export: a slot's theme with its overrides applied — importing the
+ *  file back reproduces exactly what that slot shows. */
+export function exportThemeFile(slot: ResolvedThemeSlot): ThemeFile {
+	return { name: slot.theme.name, mode: slot.theme.mode, colors: slot.colors };
 }

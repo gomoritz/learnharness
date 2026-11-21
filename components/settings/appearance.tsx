@@ -1,9 +1,11 @@
 "use client";
 /**
  * THE APPEARANCE APPLICATION (thin settings wave, 2026-09-19; theme wave,
- * 2026-11-04): the settings record's appearance section — the active
- * theme, the color overrides, the type knobs — applied as RUNTIME CSS
- * variables on <html>, plus the `dark`/`light` class the theme declares.
+ * 2026-11-04; light/dark slots 2026-11-21): the settings record's
+ * appearance section — the light and dark slots, the mode choice, the type
+ * knobs — applied as RUNTIME CSS variables on <html>, plus the
+ * `dark`/`light` class of the slot on screen. In "system" mode the OS's
+ * prefers-color-scheme picks the slot and a change switches it live.
  *
  * Why variables and not className swaps: every seam the settings touch was
  * built token-first (--background, --font-prose, --lh-ink-strong, …), so
@@ -30,17 +32,20 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import {
+	activeThemeMode,
 	BUILTIN_THEMES,
-	effectiveColors,
 	FACTORY_SETTINGS,
-	resolveTheme,
+	resolveThemeSlots,
 	themeVars,
 	type AppearanceSettings,
 	type RenderedMode,
+	type ResolvedThemeSlots,
 	type Theme,
 	type ThemeColors,
+	type ThemeMode,
 } from "@/src/core";
 
 /** The resolved, fully-concrete appearance view (delta + factory merged). */
@@ -73,15 +78,17 @@ export const BUNDLED_READING_FONTS: Readonly<Record<string, string>> = {
 	"JetBrains Mono": "var(--font-jetbrains)",
 };
 
-/** THE mapping: resolved appearance + active theme → the CSS variables to
- *  set on <html>. Colors: the theme with every override applied
- *  (core/themes.ts effectiveColors → themeVars). Type knobs: absent
- *  entries leave the stylesheet value in place. Pure — exported for tests. */
+/** THE mapping: resolved appearance + the on-screen slot's colors → the
+ *  CSS variables to set on <html>. Colors: the slot's theme with its
+ *  overrides applied (core/themes.ts resolveThemeSlots → themeVars). Type
+ *  knobs: absent entries leave the stylesheet value in place. Pure —
+ *  exported for tests. */
 export function appearanceVars(
 	a: ReturnType<typeof resolveAppearance>,
-	theme: Theme,
+	colors: ThemeColors,
+	mode: ThemeMode,
 ): Record<string, string> {
-	const vars: Record<string, string> = themeVars(effectiveColors(theme, a), theme.mode);
+	const vars: Record<string, string> = themeVars(colors, mode);
 	if (a.fontFamily !== null) {
 		const bundled = BUNDLED_READING_FONTS[a.fontFamily];
 		vars["--font-prose"] = `"${a.fontFamily}", ${bundled ? `${bundled}, ` : ""}var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;
@@ -121,11 +128,13 @@ interface AppearanceContextValue {
 	appearance: ReturnType<typeof resolveAppearance>;
 	/** The raw record delta — what a section write composes onto. */
 	delta: AppearanceSettings | undefined;
-	/** The active theme's variant (the class on <html>). */
+	/** The slot on screen (the class on <html>). */
 	resolvedMode: RenderedMode;
-	/** The active theme (Default when the record's id is gone). */
+	/** Both slots and the mode choice, resolved against the catalog. */
+	slots: ResolvedThemeSlots;
+	/** The on-screen slot's theme. */
 	activeTheme: Theme;
-	/** The active theme with every override applied — what is on screen. */
+	/** The on-screen slot's theme with its overrides — what is on screen. */
 	colors: ThemeColors;
 	/** Presets, then imported customs. */
 	themes: Theme[];
@@ -135,14 +144,15 @@ interface AppearanceContextValue {
 	onAppearanceChange: (delta: AppearanceSettings | undefined) => void;
 }
 
-const DEFAULT_CONTEXT_THEME = resolveTheme(undefined);
+const DEFAULT_CONTEXT_SLOTS = resolveThemeSlots(undefined);
 
 const AppearanceContext = createContext<AppearanceContextValue>({
 	appearance: resolveAppearance(undefined),
 	delta: undefined,
-	resolvedMode: DEFAULT_CONTEXT_THEME.mode,
-	activeTheme: DEFAULT_CONTEXT_THEME,
-	colors: DEFAULT_CONTEXT_THEME.colors,
+	resolvedMode: "dark",
+	slots: DEFAULT_CONTEXT_SLOTS,
+	activeTheme: DEFAULT_CONTEXT_SLOTS.dark.theme,
+	colors: DEFAULT_CONTEXT_SLOTS.dark.colors,
 	themes: [...BUILTIN_THEMES],
 	refreshThemes: async () => {},
 	onAppearanceChange: () => {},
@@ -152,29 +162,47 @@ export function useAppearance() {
 	return useContext(AppearanceContext);
 }
 
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+function subscribeSystemDark(onChange: () => void): () => void {
+	const query = window.matchMedia?.(DARK_QUERY);
+	query?.addEventListener("change", onChange);
+	return () => query?.removeEventListener("change", onChange);
+}
+
+function systemDarkSnapshot(): boolean {
+	return window.matchMedia?.(DARK_QUERY).matches ?? true;
+}
+
 export function AppearanceProvider({
 	children,
 	initialAppearance,
-	initialTheme,
+	initialCustoms,
+	initialMode,
 }: {
 	children: React.ReactNode;
 	/** The record's appearance delta, read server-side by the layout. */
 	initialAppearance: AppearanceSettings | undefined;
-	/** The active theme the layout resolved (a custom one included). */
-	initialTheme: Theme;
+	/** The custom themes the record names (read server-side by the layout). */
+	initialCustoms: Theme[];
+	/** The pinned mode the layout rendered; null = "system". */
+	initialMode: ThemeMode | null;
 }) {
 	const [delta, setDelta] = useState<AppearanceSettings | undefined>(initialAppearance);
-	const [themes, setThemes] = useState<Theme[]>(() =>
-		initialTheme.builtin ? [...BUILTIN_THEMES] : [...BUILTIN_THEMES, initialTheme],
-	);
+	const [themes, setThemes] = useState<Theme[]>(() => [...BUILTIN_THEMES, ...initialCustoms]);
 	const appliedRef = useRef<string>("");
 	const appearance = useMemo(() => resolveAppearance(delta), [delta]);
-	const activeTheme = useMemo(
-		() => resolveTheme(appearance.theme, themes.filter((t) => !t.builtin)),
-		[appearance.theme, themes],
-	);
-	const mode = activeTheme.mode;
-	const colors = useMemo(() => effectiveColors(activeTheme, appearance), [activeTheme, appearance]);
+	const slots = useMemo(() => resolveThemeSlots(delta, themes.filter((t) => !t.builtin)), [delta, themes]);
+	// The OS appearance (only read in "system" mode). The server snapshot
+	// is the pinned mode the layout rendered; hydration then re-reads.
+	const systemDark = useSyncExternalStore(subscribeSystemDark, systemDarkSnapshot, () => initialMode !== "light");
+	const mode = activeThemeMode(slots.themeMode, systemDark);
+	const activeTheme = slots[mode].theme;
+	const colors = slots[mode].colors;
+	// A refreshed server layout can rewrite <html>'s class/style while the
+	// mounted provider retains a newer local save. Reapply that live state
+	// when the server-rendered record changes, even within the same mode.
+	const serverKey = JSON.stringify([initialAppearance, initialCustoms, initialMode]);
 
 	// The mode lives on <html> as a class, for every `.dark`/`.light` rule
 	// and variant. A LAYOUT effect (the vars below apply earlier): descendants'
@@ -184,14 +212,12 @@ export function AppearanceProvider({
 		const root = document.documentElement;
 		root.classList.toggle("dark", mode === "dark");
 		root.classList.toggle("light", mode === "light");
-	}, [mode, initialTheme.mode]);
+		// The server snapshot is a dependency: a refreshed layout may have
+		// rewritten the class while the live mode stayed the same.
+	}, [mode, serverKey]);
 
 	// The vars apply on every change — stringified as the change signal.
-	const vars = useMemo(() => appearanceVars(appearance, activeTheme), [appearance, activeTheme]);
-	// A refreshed server layout can rewrite <html>'s class/style while the
-	// mounted provider retains a newer local save. Reapply that live state
-	// when the server-rendered palette changes, even within the same mode.
-	const serverKey = JSON.stringify(themeVars(effectiveColors(initialTheme, initialAppearance), initialTheme.mode));
+	const vars = useMemo(() => appearanceVars(appearance, colors, mode), [appearance, colors, mode]);
 	const key = useMemo(() => JSON.stringify([vars, serverKey]), [vars, serverKey]);
 	// REMOVAL is half the job (owner repro, fix wave): a later write that
 	// OMITS a var (empty font = factory, serif toggle back on) must clear
@@ -219,10 +245,13 @@ export function AppearanceProvider({
 
 	// The desktop shell's native chrome (window background, Windows/Linux
 	// control overlay) follows the theme — absent in a browser.
+	// followSystem keeps Electron's nativeTheme on "system" so the OS
+	// appearance keeps reaching prefers-color-scheme.
 	const background = colors.background;
+	const followSystem = slots.themeMode === "system";
 	useEffect(() => {
-		window.lh?.setAppearance?.({ mode, background });
-	}, [mode, background]);
+		window.lh?.setAppearance?.({ mode, background, followSystem });
+	}, [mode, background, followSystem]);
 
 	const refreshThemes = useCallback(async () => {
 		try {
@@ -247,8 +276,8 @@ export function AppearanceProvider({
 	}, []);
 
 	const value = useMemo(
-		() => ({ appearance, delta, resolvedMode: mode, activeTheme, colors, themes, refreshThemes, onAppearanceChange }),
-		[appearance, delta, mode, activeTheme, colors, themes, refreshThemes, onAppearanceChange],
+		() => ({ appearance, delta, resolvedMode: mode, slots, activeTheme, colors, themes, refreshThemes, onAppearanceChange }),
+		[appearance, delta, mode, slots, activeTheme, colors, themes, refreshThemes, onAppearanceChange],
 	);
 	return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>;
 }

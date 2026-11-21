@@ -24,7 +24,8 @@ const { PUT: putSection } = await import("../app/api/settings/[section]/route.ts
 const { GET: getThemes, POST: postTheme } = await import("../app/api/themes/route.ts");
 const { DELETE: deleteTheme } = await import("../app/api/themes/[id]/route.ts");
 const { readSettingsRecord, writeSettingsRecord, readThemeBoot, themeStore } = await import("../src/server/index.ts");
-const { BUILTIN_THEMES, exportThemeFile, themeVars, effectiveColors } = await import("../src/core/index.ts");
+const { BUILTIN_THEMES, exportThemeFile, themeVars } = await import("../src/core/index.ts");
+const { systemModeCss } = await import("../src/server/theme-boot.ts");
 const { AppearanceProvider, appearanceVars, resolveAppearance } = await import("../components/settings/appearance.tsx");
 const { AppearanceSection } = await import("../components/settings/appearance-section.tsx");
 type Theme = import("../src/core/index.ts").Theme;
@@ -43,12 +44,18 @@ const post = (body: unknown) => postTheme(new Request("http://x/api/themes", jso
 const del = (id: string) => deleteTheme(new Request(`http://x/api/themes/${id}`, { method: "DELETE" }), { params: Promise.resolve({ id }) });
 const list = async () => ((await (await getThemes()).json()) as { themes: Theme[] }).themes;
 
+/** The theme on screen at first paint (pinned modes; "system" = its dark slot). */
+const bootTheme = () => {
+	const boot = readThemeBoot();
+	return boot.slots[boot.mode ?? "dark"].theme;
+};
+
 /** The Settings section exactly as the app mounts it after a reload. */
 function renderSection(): string {
-	const { appearance, theme } = readThemeBoot();
+	const { appearance, customs, mode } = readThemeBoot();
 	return renderToStaticMarkup(
 		<InteractionLayersProvider>
-			<AppearanceProvider initialAppearance={appearance} initialTheme={theme}>
+			<AppearanceProvider initialAppearance={appearance} initialCustoms={customs} initialMode={mode}>
 				<AppearanceSection appearance={appearance} onSectionChange={() => true} />
 			</AppearanceProvider>
 		</InteractionLayersProvider>,
@@ -83,11 +90,11 @@ describe("picking a preset recolors the app and keeps my overrides", () => {
 
 		const html = renderSection();
 		assert.ok(pressed(html, "catppuccin-latte"));
-		assert.ok(!pressed(html, "default"));
+		assert.ok(!pressed(html, "ivory"));
 
-		const { theme } = readThemeBoot();
-		assert.equal(theme.mode, "light");
-		const vars = appearanceVars(resolveAppearance(stored), theme);
+		const boot = readThemeBoot();
+		assert.equal(boot.mode, "light");
+		const vars = appearanceVars(resolveAppearance(stored), boot.slots.light.colors, "light");
 		assert.equal(vars["--background"], "#101010");
 		assert.equal(vars["--card"], latte.colors.surface);
 		assert.equal(vars["--foreground"], latte.colors.text);
@@ -100,7 +107,7 @@ describe("picking a preset recolors the app and keeps my overrides", () => {
 			await put("appearance", { theme: "my-ayu", background: "#123456", codeLigatures: true });
 			if (missing === "deleted") fs.unlinkSync(path.join(THEMES_DIR, "my-ayu.json"));
 			else fs.writeFileSync(path.join(THEMES_DIR, "my-ayu.json"), "{truncated");
-			assert.equal(readThemeBoot().theme.id, "default");
+			assert.equal(bootTheme().id, "default");
 			const res = await put("appearance", { ...readSettingsRecord()!.appearance, proseFontSize: 20 });
 			assert.equal(res.status, 200);
 			assert.deepEqual(readSettingsRecord()!.appearance, {
@@ -123,7 +130,7 @@ describe("importing a theme file makes it a selectable card; a bad file leaves n
 		await post(ayu);
 		await put("appearance", { theme: "my-ayu" });
 		t.mock.method(themeStore, "listThemes", () => { throw new Error("Must not enumerate for first paint"); });
-		assert.equal(readThemeBoot().theme.id, "my-ayu");
+		assert.equal(bootTheme().id, "my-ayu");
 	});
 
 	it("storage failure cannot return import success, and invalid store ids fail loudly", async t => {
@@ -156,7 +163,7 @@ describe("importing a theme file makes it a selectable card; a bad file leaves n
 				assert.match(theme.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 				assert.ok(fs.existsSync(path.join(THEMES_DIR, `${theme.id}.json`)));
 				assert.equal((await put("appearance", { theme: theme.id })).status, 200);
-				assert.equal(readThemeBoot().theme.id, theme.id);
+				assert.equal(bootTheme().id, theme.id);
 			}
 		}
 	});
@@ -201,13 +208,70 @@ describe("export reflects what I see", () => {
 	it("Mocha + a warning override exports Mocha's 12 with that warning, and re-imports to the same vars", async () => {
 		const appearance: AppearanceSettings = { theme: "catppuccin-mocha", colors: { warning: "#fab387" } };
 		await put("appearance", appearance);
-		const exported = exportThemeFile(readThemeBoot().theme, readSettingsRecord()!.appearance);
+		const exported = exportThemeFile(readThemeBoot().slots.dark);
 		assert.deepEqual(exported, { name: "Catppuccin Mocha", mode: "dark", colors: { ...mocha.colors, warning: "#fab387" } });
 
 		const res = await post(exported);
 		assert.equal(res.status, 201);
 		const { theme } = (await res.json()) as { theme: Theme };
 		assert.equal(theme.id, "catppuccin-mocha-2", "the preset's id stays reserved");
-		assert.deepEqual(themeVars(effectiveColors(theme, undefined), theme.mode), readThemeBoot().vars);
+		assert.deepEqual(themeVars(theme.colors, theme.mode), readThemeBoot().vars);
+	});
+});
+
+describe("light/dark slots through the API", () => {
+	it("a slot record saves, boots pinned, and system mode boots both palettes behind the media query", async () => {
+		const appearance: AppearanceSettings = {
+			themeMode: "light",
+			light: { theme: "ivory", colors: { accent: "#123456" } },
+			dark: { theme: "catppuccin-macchiato" },
+		};
+		assert.equal((await put("appearance", appearance)).status, 200);
+		assert.deepEqual(readSettingsRecord()!.appearance, appearance);
+		let boot = readThemeBoot();
+		assert.equal(boot.mode, "light");
+		assert.equal(boot.vars["--lh-accent"], "#123456");
+		assert.equal(boot.systemCss, "");
+		const html = renderSection();
+		assert.ok(pressed(html, "ivory"));
+		assert.ok(pressed(html, "catppuccin-macchiato"));
+		assert.ok(html.includes('data-testid="theme-mode-light"') && html.includes('aria-checked="true"'));
+
+		assert.equal((await put("appearance", { ...appearance, themeMode: "system" })).status, 200);
+		boot = readThemeBoot();
+		assert.equal(boot.mode, null);
+		assert.deepEqual(boot.vars, {});
+		assert.equal(boot.systemCss, systemModeCss(boot.slots));
+		assert.match(boot.systemCss, /@media \(prefers-color-scheme: light\)\{:root:root\{[^}]*--lh-accent:#123456/);
+		assert.match(boot.systemCss, new RegExp(`@media \\(prefers-color-scheme: dark\\)\\{:root:root\\{--background:${BUILTIN_THEMES.find(t => t.id === "catppuccin-macchiato")!.colors.background}`));
+	});
+
+	it("bad slot shapes and unknown slot themes are refused", async () => {
+		assert.equal((await put("appearance", { themeMode: "auto" })).status, 400);
+		assert.equal((await put("appearance", { light: { colors: { nope: "#fff" } } })).status, 400);
+		assert.equal((await put("appearance", { dark: { colors: { background: "red" } } })).status, 400);
+		const res = await put("appearance", { themeMode: "dark", dark: { theme: "no-such-theme" } });
+		assert.equal(res.status, 400);
+		assert.match(((await res.json()) as { error: string }).error, /unknown theme "no-such-theme"/);
+	});
+
+	it("a custom theme lands in its mode's grid; removing it resets only the slots that used it", async () => {
+		await post(ayu);
+		await put("appearance", { themeMode: "system", light: { theme: "ivory" }, dark: { theme: "my-ayu", colors: { warning: "#123456" } } });
+		assert.equal(readThemeBoot().slots.dark.theme.id, "my-ayu");
+		assert.equal((await del("my-ayu")).status, 200);
+		assert.deepEqual(readSettingsRecord()!.appearance, {
+			themeMode: "system", light: { theme: "ivory" }, dark: { colors: { warning: "#123456" } },
+		});
+		assert.equal(readThemeBoot().slots.dark.theme.id, "default");
+	});
+
+	it("a slot whose custom file vanished heals on the next unrelated save", async () => {
+		await post(ayu);
+		await put("appearance", { themeMode: "dark", dark: { theme: "my-ayu" } });
+		fs.unlinkSync(path.join(THEMES_DIR, "my-ayu.json"));
+		const res = await put("appearance", { ...readSettingsRecord()!.appearance, proseFontSize: 20 });
+		assert.equal(res.status, 200);
+		assert.deepEqual(readSettingsRecord()!.appearance, { themeMode: "dark", dark: {}, proseFontSize: 20 });
 	});
 });

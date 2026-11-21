@@ -2,7 +2,7 @@ import React, { act } from "react";
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { parseHTML } from "linkedom";
-import { BUILTIN_THEMES, DEFAULT_THEME, type AppearanceSettings, type GraphSnapshot } from "../src/core/index.ts";
+import { BUILTIN_THEMES, type AppearanceSettings, type GraphSnapshot, type ThemeMode } from "../src/core/index.ts";
 import { AppearanceProvider, useAppearance } from "../components/settings/appearance.tsx";
 import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { ServerEventsProvider } from "../components/server-events.tsx";
@@ -66,7 +66,7 @@ it("same-mode theme/override changes feed new paint to the mounted graph without
 	try {
 		await act(async () => root.render(
 			<InteractionLayersProvider><ServerEventsProvider connect={() => ({ close() {}, onOpen() {}, onEvent() {} })}>
-				<AppearanceProvider initialAppearance={{ theme: mocha.id }} initialTheme={mocha}><Probe /></AppearanceProvider>
+				<AppearanceProvider initialAppearance={{ theme: mocha.id }} initialCustoms={[]} initialMode="dark"><Probe /></AppearanceProvider>
 			</ServerEventsProvider></InteractionLayersProvider>,
 		));
 		assert.ok(feeds.length > 0, "real GraphView reaches its canvas feed");
@@ -103,8 +103,8 @@ it("a server palette refresh cannot overwrite newer live colors or mode; typogra
 	let live!: ReturnType<typeof useAppearance>;
 	function Probe() { live = useAppearance(); return null; }
 	const dawn = BUILTIN_THEMES.find(theme => theme.id === "rose-pine-dawn")!;
-	const render = (initialAppearance: AppearanceSettings, initialTheme = DEFAULT_THEME) => root.render(
-		<AppearanceProvider initialAppearance={initialAppearance} initialTheme={initialTheme}><Probe /></AppearanceProvider>,
+	const render = (initialAppearance: AppearanceSettings, initialMode: ThemeMode | null = "dark") => root.render(
+		<AppearanceProvider initialAppearance={initialAppearance} initialCustoms={[]} initialMode={initialMode}><Probe /></AppearanceProvider>,
 	);
 	try {
 		await act(async () => render({}));
@@ -113,7 +113,7 @@ it("a server palette refresh cannot overwrite newer live colors or mode; typogra
 		// Simulate <html> rewritten by a refreshed layout before provider effects.
 		document.documentElement.className = "dark";
 		document.documentElement.style.setProperty("--foreground", "#111111");
-		await act(async () => render({ colors: { text: "#111111" } }, { ...DEFAULT_THEME, mode: "light" }));
+		await act(async () => render({ colors: { text: "#111111" } }, "light"));
 		assert.equal(document.documentElement.classList.contains("light"), true);
 		assert.equal(document.documentElement.style.getPropertyValue("--foreground"), "#123456");
 		assert.match(document.documentElement.style.getPropertyValue("--font-prose"), /Georgia/);
@@ -121,6 +121,62 @@ it("a server palette refresh cannot overwrite newer live colors or mode; typogra
 		assert.equal(document.documentElement.style.getPropertyValue("--foreground"), dawn.colors.text);
 		assert.equal(document.documentElement.style.getPropertyValue("--font-prose"), "");
 		assert.equal(document.documentElement.style.getPropertyValue("--font-title"), "");
+	} finally {
+		await act(async () => root.unmount());
+		for (const [key, descriptor] of saved) {
+			if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+		}
+	}
+});
+
+it("system mode follows the OS live: the slot on screen, the class, and the native chrome report", async () => {
+	const dom = parseHTML("<html><body><div id='root'></div></body></html>");
+	let dark = true;
+	const listeners = new Set<() => void>();
+	const reports: unknown[] = [];
+	const win = dom.window as unknown as Record<string, unknown>;
+	win.matchMedia = () => ({
+		get matches() { return dark; },
+		addEventListener: (_: string, cb: () => void) => listeners.add(cb),
+		removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
+	});
+	win.lh = { setAppearance: (a: unknown) => reports.push(a) };
+	const globals = { window: dom.window, document: dom.document, IS_REACT_ACT_ENVIRONMENT: true,
+		fetch: async () => Response.json({ themes: BUILTIN_THEMES }) };
+	const saved = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+	for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+	const { createRoot } = await import("react-dom/client");
+	const root = createRoot(document.getElementById("root")!);
+	let live!: ReturnType<typeof useAppearance>;
+	function Probe() { live = useAppearance(); return null; }
+	const ivory = BUILTIN_THEMES.find(theme => theme.id === "ivory")!;
+	const gruvbox = BUILTIN_THEMES.find(theme => theme.id === "gruvbox-dark")!;
+	const appearance: AppearanceSettings = {
+		themeMode: "system",
+		light: { theme: ivory.id, colors: { accent: "#123456" } },
+		dark: { theme: gruvbox.id },
+	};
+	try {
+		await act(async () => root.render(<AppearanceProvider initialAppearance={appearance} initialCustoms={[]} initialMode={null}><Probe /></AppearanceProvider>));
+		assert.equal(live.resolvedMode, "dark");
+		assert.equal(document.documentElement.classList.contains("dark"), true);
+		assert.equal(document.documentElement.style.getPropertyValue("--background"), gruvbox.colors.background);
+		assert.deepEqual(reports.at(-1), { mode: "dark", background: gruvbox.colors.background, followSystem: true });
+
+		dark = false;
+		await act(async () => { for (const cb of listeners) cb(); });
+		assert.equal(live.resolvedMode, "light");
+		assert.equal(live.activeTheme.id, ivory.id);
+		assert.equal(document.documentElement.classList.contains("light"), true);
+		assert.equal(document.documentElement.style.getPropertyValue("--background"), ivory.colors.background);
+		assert.equal(document.documentElement.style.getPropertyValue("--lh-accent"), "#123456", "the light slot's own override");
+		assert.deepEqual(reports.at(-1), { mode: "light", background: ivory.colors.background, followSystem: true });
+
+		// Pinning dark ignores the OS (still light) and drops followSystem.
+		await act(async () => live.onAppearanceChange({ ...appearance, themeMode: "dark" }));
+		assert.equal(live.resolvedMode, "dark");
+		assert.equal(document.documentElement.style.getPropertyValue("--lh-accent"), gruvbox.colors.accent, "dark slot has no override");
+		assert.deepEqual(reports.at(-1), { mode: "dark", background: gruvbox.colors.background, followSystem: false });
 	} finally {
 		await act(async () => root.unmount());
 		for (const [key, descriptor] of saved) {

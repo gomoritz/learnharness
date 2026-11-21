@@ -681,11 +681,13 @@ async function main() {
 
 	// Read the same record/custom theme the server uses before constructing
 	// any native window, including the external development shell.
+	// themeSource is still its "system" default here, so
+	// shouldUseDarkColors is the OS appearance ("system" theme mode).
 	appearance = readAppearance(serverDataDir({
 		devUrl: process.env.LH_DEV_URL, env: process.env,
 		packagedDataDir: DATA_DIR(), repoRoot: path.join(__dirname, ".."),
-	}));
-	nativeTheme.themeSource = themeSourceFor(appearance.mode);
+	}), nativeTheme.shouldUseDarkColors);
+	nativeTheme.themeSource = themeSourceFor(appearance.mode, appearance.followSystem);
 
 	// Dev mode: point at a running `next dev` server (LH_DEV_URL) — no
 	// spawn, no packaging, full HMR. The rest of this shell still applies
@@ -816,7 +818,7 @@ async function main() {
 	ipcMain.on("lh:appearance", (event, next) => {
 		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) return;
 		appearance = normalizeAppearance(next);
-		nativeTheme.themeSource = themeSourceFor(appearance.mode);
+		nativeTheme.themeSource = themeSourceFor(appearance.mode, appearance.followSystem);
 		for (const win of BrowserWindow.getAllWindows()) applyChrome(win);
 	});
 	reopenWindow = () => { chatgpt?.resume(); subscriptions?.resume(); return createWindow(url); };

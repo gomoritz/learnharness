@@ -1,22 +1,25 @@
 "use client";
 /**
- * THE THEME PICKER (theme wave, 2026-11-04): a grid of theme cards — the
- * presets, then the imported customs, then the dashed "Import JSON" card —
- * under a header that names the active theme and offers "Export JSON".
+ * THE THEME PICKER (theme wave, 2026-11-04; light/dark slots 2026-11-21):
+ * one grid per slot — the light themes, or the dark ones (presets, then
+ * imported customs of that mode), optionally followed by the dashed
+ * "Import JSON" card — under a header that names the slot's theme and
+ * offers "Export JSON".
  *
  * Each card previews its theme with literal colors (never the page's live
  * tokens): an "Aa ai" sample on the theme background (text + accent ink)
  * and four dots — surface, accent, error, success. Picking a card only
- * changes `appearance.theme`; overrides ride along untouched. Imports POST
- * the file's JSON to /api/themes (the server validates; its error shows in
- * the import card). Export downloads the ACTIVE theme with every override
- * applied — re-importing it reproduces what is on screen.
+ * changes the slot's theme; its overrides ride along untouched. Imports
+ * POST the file's JSON to /api/themes (the server validates; its error
+ * shows in the import card) and land in the grid of their mode. Export
+ * downloads the slot's theme with its overrides applied — re-importing it
+ * reproduces what that slot shows.
  */
 
 import { useRef, useState } from "react";
 import { CheckIcon, DownloadIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { exportThemeFile, type AppearanceSettings, type Theme } from "@/src/core";
+import { exportThemeFile, type ResolvedThemeSlot, type Theme, type ThemeMode } from "@/src/core";
 
 /** The selected card's frame: a 2px gap in the dialog surface, then a 1px
  *  ring in the theme accent (the check by the name does the rest). */
@@ -64,21 +67,27 @@ function downloadJson(filename: string, data: unknown) {
 	URL.revokeObjectURL(url);
 }
 
-/** The Theme row of Settings → Appearance (see the file header). */
+/** One slot's theme row of Settings → Appearance (see the file header). */
 export function ThemeCards({
+	mode,
 	themes,
-	active,
-	appearance,
+	slot,
+	onScreen,
+	showImport,
 	onSelect,
 	onRemoved,
 	onImported,
 }: {
-	/** Presets, then customs (the provider's catalog). */
+	/** The slot this grid picks for. */
+	mode: ThemeMode;
+	/** Presets, then customs — already filtered to this slot's mode. */
 	themes: readonly Theme[];
-	/** The active theme — its card is pressed. */
-	active: Theme;
-	/** The record delta — the export applies its overrides. */
-	appearance: AppearanceSettings | undefined;
+	/** The resolved slot — its theme's card is pressed; export uses its colors. */
+	slot: ResolvedThemeSlot;
+	/** This slot is the one rendering right now. */
+	onScreen: boolean;
+	/** Append the "Import JSON" card to this grid. */
+	showImport?: boolean;
 	onSelect: (id: string) => void;
 	/** After a successful DELETE (the catalog must be re-read). */
 	onRemoved: (theme: Theme) => void;
@@ -123,19 +132,21 @@ export function ThemeCards({
 		if (res?.ok) onRemoved(theme);
 	};
 
+	const active = slot.theme;
 	return (
-		<div data-testid="row-theme" className="flex flex-col gap-3 py-1">
+		<div data-testid={`row-theme-${mode}`} className="flex flex-col gap-3 py-1">
 			<div className="flex items-end justify-between gap-4">
 				<span className="min-w-0">
-					<span className="block font-prose text-(length:--lh-prose-size)">Theme</span>
-					<span data-testid="theme-hint" className="block text-xs text-muted-foreground/70">
-						{active.name} · {active.mode} · sets every color below
+					<span className="block font-prose text-(length:--lh-prose-size)">{mode === "light" ? "Light theme" : "Dark theme"}</span>
+					<span data-testid={`theme-hint-${mode}`} className="block text-xs text-muted-foreground/70">
+						{active.name}
+						{onScreen ? " · on screen now" : ""}
 					</span>
 				</span>
 				<button
 					type="button"
-					data-testid="theme-export"
-					onClick={() => downloadJson(`${active.id}.json`, exportThemeFile(active, appearance))}
+					data-testid={`theme-export-${mode}`}
+					onClick={() => downloadJson(`${active.id}.json`, exportThemeFile(slot))}
 					className="flex h-7 shrink-0 items-center gap-2 rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50"
 				>
 					<DownloadIcon className="size-3.5" />
@@ -182,7 +193,7 @@ export function ThemeCards({
 						</div>
 					);
 				})}
-				<button
+				{showImport && <button
 					type="button"
 					data-testid="theme-import"
 					disabled={busy}
@@ -196,8 +207,8 @@ export function ThemeCards({
 					) : (
 						<span className="text-muted-foreground/70">name · mode · colors</span>
 					)}
-				</button>
-				<input
+				</button>}
+				{showImport && <input
 					ref={fileRef}
 					type="file"
 					accept=".json,application/json"
@@ -208,7 +219,7 @@ export function ThemeCards({
 						e.target.value = ""; // the same file can be picked again
 						if (file) void importFile(file);
 					}}
-				/>
+				/>}
 			</div>
 		</div>
 	);

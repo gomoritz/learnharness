@@ -100,6 +100,16 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 			}
 			appearance.theme = "default";
 		}
+		// The same rule per slot; a healed slot drops its id (= its default).
+		for (const mode of ["light", "dark"] as const) {
+			const slot = appearance[mode];
+			const id = slot?.theme;
+			if (!slot || id === undefined || isBuiltinThemeId(id) || themeStore.readTheme(id) !== null) continue;
+			if (id !== record.appearance?.[mode]?.theme) {
+				return Response.json({ error: `unknown theme "${id}"` }, { status: 400 });
+			}
+			delete slot.theme;
+		}
 	}
 	if (section === "agent") {
 		// Orphan-heal (contract fix, interlude 2026-09-26): an ON switch

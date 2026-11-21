@@ -1,8 +1,8 @@
 /**
  * DELETE /api/themes/[id] (theme wave, 2026-11-04) — remove an imported
- * theme. Presets cannot be removed (400); an unknown id is a 404. When
- * the removed theme was active, the record falls back to "default" and
- * every color override stays exactly as it was.
+ * theme. Presets cannot be removed (400); an unknown id is a 404. A
+ * light/dark slot that used it falls back to its default theme (a legacy
+ * record's single theme to "default"); every color override stays.
  */
 
 import { isBuiltinThemeId } from "@/src/core";
@@ -17,8 +17,19 @@ export async function DELETE(_request: Request, ctx: { params: Promise<{ id: str
 	if (!theme) return Response.json({ error: `unknown theme "${id}"` }, { status: 404 });
 	themeStore.deleteTheme(id);
 	const record = readSettingsRecord();
-	if (record?.appearance?.theme === id) {
-		writeSettingsRecord({ ...record, appearance: { ...record.appearance, theme: "default" } });
+	const a = record?.appearance;
+	if (record && a && (a.theme === id || a.light?.theme === id || a.dark?.theme === id)) {
+		const next = { ...a };
+		if (next.theme === id) next.theme = "default";
+		// A slot that used it falls back to its default theme; overrides stay.
+		for (const mode of ["light", "dark"] as const) {
+			const slot = next[mode];
+			if (slot?.theme === id) {
+				const { theme: _removed, ...rest } = slot;
+				next[mode] = rest;
+			}
+		}
+		writeSettingsRecord({ ...record, appearance: next });
 	}
 	return Response.json({ theme });
 }

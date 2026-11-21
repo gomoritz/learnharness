@@ -9,7 +9,7 @@ import { ServerEventsProvider } from "@/components/server-events";
 import { AppearanceProvider } from "@/components/settings/appearance";
 import UpdateBanner from "@/components/update-banner";
 import { PluginsProvider } from "@/components/plugins";
-import { readThemeBoot } from "@/src/server";
+import { readThemeBoot, SYSTEM_MODE_SCRIPT } from "@/src/server";
 
 // Chrome = JetBrains Mono, teaching prose = Source Sans 3, titles = CMU
 // Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
@@ -27,20 +27,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 	// record and the theme files are per-machine disk state — without it a
 	// prerendered route (settings) would bake the BUILD machine's record.
 	await connection();
-	const { appearance, theme, vars } = readThemeBoot();
+	const { appearance, customs, mode, vars, systemCss } = readThemeBoot();
 	return (
 		<html
 			lang="en"
-			className={`${theme.mode} ${ui.variable} ${prose.variable}`}
+			className={`${mode ?? ""} ${ui.variable} ${prose.variable}`.trim()}
 			style={vars as React.CSSProperties}
 			suppressHydrationWarning
 		>
+			{/* "system" theme: the OS decides — both palettes ride a media
+			    query and the script sets the dark/light class before paint. */}
+			{mode === null && (
+				<head>
+					<script dangerouslySetInnerHTML={{ __html: SYSTEM_MODE_SCRIPT }} />
+					<style dangerouslySetInnerHTML={{ __html: systemCss }} />
+				</head>
+			)}
 			<body className="min-h-dvh antialiased">
 			{/* The notification channel rides OUTSIDE everything: sidebar, dock,
 				 and pages all subscribe as the polls retire (push S3, 2026-10-02). */}
 			<ServerEventsProvider>
 				<PluginsProvider>
-					<AppearanceProvider initialAppearance={appearance} initialTheme={theme}>
+					<AppearanceProvider initialAppearance={appearance} initialCustoms={customs} initialMode={mode}>
 						<SidebarProvider>
 							<ActivityProvider>
 								<AppShell>{children}</AppShell>

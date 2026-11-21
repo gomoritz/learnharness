@@ -27,9 +27,10 @@
  *   window.lh.onOpenSettings(cb) — menu navigation, buffered until React
  *   subscribes after a window is reopened. Browser builds have no bridge.
  *
- *   window.lh.setAppearance(a) — the active theme's { mode, background }
- *   (theme wave, 2026-11-04): main sets nativeTheme.themeSource and
- *   repaints the native window background / control overlay to match.
+ *   window.lh.setAppearance(a) — the on-screen theme's { mode, background,
+ *   followSystem } (theme wave, 2026-11-04): main sets
+ *   nativeTheme.themeSource ("system" while followSystem) and repaints the
+ *   native window background / control overlay to match.
  *
  * Channel names are mirrored in electron/main.cjs — keep them in sync.
  */

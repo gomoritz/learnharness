@@ -41,12 +41,12 @@ it("invalid writes are rejected; invalid historical disk values are dropped, nev
 });
 
 it("the appearance mapping changes ONLY the shared code token, normal permits rather than forces ligatures", () => {
-  const off = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
-  const on = appearanceVars(resolveAppearance({ codeLigatures: true }), DEFAULT_THEME);
+  const off = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark");
+  const on = appearanceVars(resolveAppearance({ codeLigatures: true }), DEFAULT_THEME.colors, "dark");
   assert.equal(off["--lh-code-ligatures"], "none");
   assert.equal(on["--lh-code-ligatures"], "normal");
   assert.deepEqual(on, { ...off, "--lh-code-ligatures": "normal" });
-  assert.deepEqual(appearanceVars(resolveAppearance({ codeLigatures: false }), DEFAULT_THEME), off);
+  assert.deepEqual(appearanceVars(resolveAppearance({ codeLigatures: false }), DEFAULT_THEME.colors, "dark"), off);
 });
 
 it("native inline/fenced code and both CodeMirror modes opt in without changing prose or diagrams", () => {
@@ -87,7 +87,7 @@ it("the Appearance switch preserves siblings, applies immediately through the pr
   const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Code ligatures"]')!;
   const token = () => document.documentElement.style.getPropertyValue("--lh-code-ligatures");
   try {
-    await act(async () => root.render(<InteractionLayersProvider><AppearanceProvider initialAppearance={{ proseFontSize: 20, fontFamily: "Georgia" }} initialTheme={DEFAULT_THEME}><Panel /></AppearanceProvider></InteractionLayersProvider>));
+    await act(async () => root.render(<InteractionLayersProvider><AppearanceProvider initialAppearance={{ proseFontSize: 20, fontFamily: "Georgia" }} initialCustoms={[]} initialMode="dark"><Panel /></AppearanceProvider></InteractionLayersProvider>));
     assert.equal(toggle().getAttribute("aria-checked"), "false");
     assert.equal(token(), "none");
     assert.equal(document.querySelectorAll('[data-testid="row-code-ligatures"]').length, 1);

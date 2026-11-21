@@ -61,12 +61,12 @@ it("invalid widths/toggles are rejected on save and dropped on read (= Full / on
 });
 
 it("the appearance mapping sets the transcript variable only when capped", () => {
-	const full = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
+	const full = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME.colors, "dark");
 	assert.equal("--lh-transcript-max" in full, false);
-	const capped = appearanceVars(resolveAppearance({ transcriptMaxWidth: 64 }), DEFAULT_THEME);
+	const capped = appearanceVars(resolveAppearance({ transcriptMaxWidth: 64 }), DEFAULT_THEME.colors, "dark");
 	assert.deepEqual(capped, { ...full, "--lh-transcript-max": "64rem" });
 	// The adaptive toggle is behavior, not a stylesheet variable.
-	assert.deepEqual(appearanceVars(resolveAppearance({ adaptiveQuestions: false }), DEFAULT_THEME), full);
+	assert.deepEqual(appearanceVars(resolveAppearance({ adaptiveQuestions: false }), DEFAULT_THEME.colors, "dark"), full);
 });
 
 it("the transcript column reads the variable; unset leaves today's full-bleed column", () => {
@@ -125,7 +125,7 @@ it("Appearance rows: the slider commits on release (Full = absent) and the toggl
 	};
 	const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Adapt question layout"]')!;
 	try {
-		await act(async () => root.render(<InteractionLayersProvider><AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialTheme={DEFAULT_THEME}><Panel /></AppearanceProvider></InteractionLayersProvider>));
+		await act(async () => root.render(<InteractionLayersProvider><AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialCustoms={[]} initialMode="dark"><Panel /></AppearanceProvider></InteractionLayersProvider>));
 		assert.equal(slider().getAttribute("min"), "46");
 		assert.equal(slider().getAttribute("max"), "122", "one step past 120rem is Full");
 		assert.equal(slider().getAttribute("step"), "2");

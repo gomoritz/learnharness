@@ -1,8 +1,8 @@
 /**
  * The theme wave's pure core (src/core/themes.ts): the import validator,
  * the presets, the theme → CSS-token adapter (Default pinned against the
- * app/globals.css literals), override precedence across the two override
- * homes, and the export.
+ * app/globals.css literals), the light/dark slots (legacy records
+ * included), and the export.
  */
 
 import assert from "node:assert/strict";
@@ -11,8 +11,11 @@ import { describe, it } from "node:test";
 import {
 	BUILTIN_THEMES,
 	DEFAULT_THEME,
-	effectiveColors,
+	activeThemeMode,
 	exportThemeFile,
+	materializeThemeSlots,
+	referencedThemeIds,
+	resolveThemeSlots,
 	parseThemeFile,
 	resolveTheme,
 	sanitizeThemeFile,
@@ -121,24 +124,94 @@ describe("themeVars — the adapter", () => {
 	});
 });
 
-describe("effectiveColors — overrides over the theme", () => {
-	it("no overrides = the theme", () => {
-		assert.deepEqual(effectiveColors(mocha, undefined), mocha.colors);
-		assert.deepEqual(effectiveColors(mocha, { background: null, colors: { warning: null } }), mocha.colors);
+describe("resolveThemeSlots — light/dark slots", () => {
+	const latte = BUILTIN_THEMES.find((t) => t.id === "catppuccin-latte")!;
+	const ivory = BUILTIN_THEMES.find((t) => t.id === "ivory")!;
+	const custom = { id: "my-light", name: "My Light", mode: "light" as const, builtin: false, colors: { ...ivory.colors, accent: "#123456" } };
+
+	it("an empty record: Default pinned dark, Latte in the light slot", () => {
+		const s = resolveThemeSlots(undefined);
+		assert.equal(s.themeMode, "dark");
+		assert.equal(s.dark.theme.id, DEFAULT_THEME.id);
+		assert.equal(s.light.theme.id, latte.id);
+		assert.deepEqual(s.dark.colors, DEFAULT_THEME.colors);
 	});
 
-	it("each override wins from its home: background, mdRendering inks, colors", () => {
-		const c = effectiveColors(mocha, {
+	it("a legacy record: its theme + every override become the slot of its mode, that mode pinned", () => {
+		const s = resolveThemeSlots({
+			theme: "catppuccin-mocha",
 			background: "#101010",
-			mdRendering: { boldColor: "#ff0000", italicColor: "#00ff00" },
-			colors: { warning: "#fab387", surface: "#222" },
+			mdRendering: { boldColor: "#ff0000", italicColor: null },
+			colors: { warning: "#fab387", surface: null },
 		});
-		assert.equal(c.background, "#101010");
-		assert.equal(c.bold, "#ff0000");
-		assert.equal(c.italic, "#00ff00");
-		assert.equal(c.warning, "#fab387");
-		assert.equal(c.surface, "#222");
-		assert.equal(c.text, mocha.colors.text);
+		assert.equal(s.themeMode, "dark");
+		assert.equal(s.dark.theme.id, mocha.id);
+		assert.deepEqual(s.dark.overrides, { background: "#101010", bold: "#ff0000", warning: "#fab387" });
+		assert.deepEqual(s.dark.colors, { ...mocha.colors, background: "#101010", bold: "#ff0000", warning: "#fab387" });
+		assert.equal(s.light.theme.id, latte.id, "the other slot is its default");
+		assert.deepEqual(s.light.overrides, {});
+	});
+
+	it("a legacy light theme pins light", () => {
+		const s = resolveThemeSlots({ theme: "ivory" });
+		assert.equal(s.themeMode, "light");
+		assert.equal(s.light.theme.id, "ivory");
+		assert.equal(s.dark.theme.id, DEFAULT_THEME.id);
+	});
+
+	it("slot records ignore the legacy keys", () => {
+		const s = resolveThemeSlots({ themeMode: "system", theme: "ivory", background: "#000000", dark: { theme: "rose-pine" } });
+		assert.equal(s.themeMode, "system");
+		assert.equal(s.light.theme.id, latte.id);
+		assert.equal(s.dark.theme.id, "rose-pine");
+		assert.deepEqual(s.dark.overrides, {});
+	});
+
+	it("a slot only takes a theme of its mode; customs resolve from the catalog", () => {
+		const s = resolveThemeSlots({ themeMode: "light", light: { theme: "catppuccin-mocha" }, dark: { theme: custom.id } }, [custom]);
+		assert.equal(s.light.theme.id, latte.id, "a dark theme in the light slot = the default");
+		assert.equal(s.dark.theme.id, DEFAULT_THEME.id, "a light custom in the dark slot = the default");
+		assert.equal(resolveThemeSlots({ themeMode: "light", light: { theme: custom.id } }, [custom]).light.colors.accent, "#123456");
+		assert.equal(resolveThemeSlots({ themeMode: "light", light: { theme: custom.id } }).light.theme.id, latte.id, "a gone custom = the default");
+	});
+
+	it("activeThemeMode: pinned modes ignore the OS, system follows it", () => {
+		assert.equal(activeThemeMode("light", true), "light");
+		assert.equal(activeThemeMode("dark", false), "dark");
+		assert.equal(activeThemeMode("system", true), "dark");
+		assert.equal(activeThemeMode("system", false), "light");
+	});
+
+	it("referencedThemeIds names only the custom ids", () => {
+		assert.deepEqual(referencedThemeIds({ theme: "x-old", light: { theme: "ivory" }, dark: { theme: "my-dark" } }), ["x-old", "my-dark"]);
+		assert.deepEqual(referencedThemeIds(undefined), []);
+	});
+});
+
+describe("materializeThemeSlots — the first theme write migrates the record", () => {
+	it("converts a legacy record, drops the legacy keys, keeps the rest", () => {
+		const out = materializeThemeSlots({
+			theme: "catppuccin-macchiato",
+			background: "#101010",
+			colors: { warning: "#fab387" },
+			fontFamily: "Georgia",
+			mdRendering: { headingWeight: 700, boldColor: "#ff0000" },
+		});
+		assert.deepEqual(out, {
+			themeMode: "dark",
+			fontFamily: "Georgia",
+			mdRendering: { headingWeight: 700 },
+			light: {},
+			dark: { theme: "catppuccin-macchiato", colors: { background: "#101010", bold: "#ff0000", warning: "#fab387" } },
+		});
+		assert.deepEqual(resolveThemeSlots(out), resolveThemeSlots({
+			theme: "catppuccin-macchiato", background: "#101010", colors: { warning: "#fab387" }, mdRendering: { boldColor: "#ff0000" },
+		}), "the conversion renders exactly the same");
+	});
+
+	it("keeps a slot record as it is (nulls dropped)", () => {
+		const out = materializeThemeSlots({ themeMode: "system", light: { theme: "ivory", colors: { accent: null, text: "#111111" } } });
+		assert.deepEqual(out, { themeMode: "system", light: { theme: "ivory", colors: { text: "#111111" } }, dark: {} });
 	});
 });
 
@@ -154,7 +227,7 @@ describe("graph edges", () => {
 
 describe("exportThemeFile", () => {
 	it("is the theme with every override applied, all 12 keys", () => {
-		const out = exportThemeFile(mocha, { colors: { warning: "#fab387" } });
+		const out = exportThemeFile(resolveThemeSlots({ themeMode: "dark", dark: { theme: mocha.id, colors: { warning: "#fab387" } } }).dark);
 		assert.deepEqual(out, { name: "Catppuccin Mocha", mode: "dark", colors: { ...mocha.colors, warning: "#fab387" } });
 		assert.deepEqual(Object.keys(out.colors).sort(), [...THEME_COLOR_KEYS].sort());
 		assert.ok(sanitizeThemeFile(out), "an export is always importable");
